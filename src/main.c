@@ -1,6 +1,5 @@
 #include "core.h"
 #include <stdio.h>
-#include <string.h>
 #include <raylib.h>
 
 #define WINDOW_WIDTH     600
@@ -18,8 +17,6 @@
 
 typedef struct {
   Str name;
-  Str description;
-  Str command;
   size_t fuzzy_score;
 } Entry;
 
@@ -41,7 +38,7 @@ static struct {
   size_t num_entries;
   // The entries are loaded from a file, since they are views we also store the
   // contents of the loaded file to free at the end
-  Str entries_file;
+  Str entries_to_free;
   // Index of the currently selected entry (the one that gets executed if the
   // user presses enter)
   size_t selected_entry;
@@ -58,27 +55,6 @@ static ErrorCode LoadThemeFromFile(void)
   Str tofree = contents;
 
   DEALLOCATE(&STATE.allocator, (void *)tofree.data, tofree.length); 
-  return ret_code;
-}
-
-static ErrorCode LoadEntriesFromFile(void)
-{
-  ErrorCode ret_code = kErrorNone;
-  Str contents;
-  TRY(LoadFileAsStr(&STATE.allocator, ENTRIES_FILE_PATH, &contents));
-  STATE.entries_file = contents;
-
-  while (contents.length > 0 && ret_code == kErrorNone) {
-    Str line = StrTrim(StrChopLeft(&contents, '\n'));
-    if (line.length == 0) { continue; }
-    if (line.data[0] == '#') { continue; }
-    if (StrCountChar(line, ',') != 2) { ret_code = kErrorParsing; }
-    Str name = StrTrim(StrChopLeft(&line, ','));
-    Str cmd  = StrTrim(StrChopLeft(&line, ','));
-    Str desc = StrTrim(line);
-    STATE.entries[STATE.num_entries++] = (Entry) { name, desc, cmd, 0 };
-  }
-
   return ret_code;
 }
 
@@ -107,20 +83,13 @@ static ErrorCode LoadEntriesFromStdin(void)
   }
 
   Str contents = StrFromParts((const char *)raw, size);
-  STATE.entries_file = contents;
+  STATE.entries_to_free = contents;
   while (contents.length > 0) {
     if (STATE.num_entries == MAX_ENTRIES) { return kErrorOutOfMem; }
     Str token = StrChopLeft(&contents, '\n'); 
     STATE.entries[STATE.num_entries++].name = token;
   }
   return kErrorNone; 
-}
-
-static void RunCommand(Str command)
-{
-  char cmd[1024];
-  snprintf(cmd, sizeof(cmd), "%.*s", (int)command.length, command.data);
-  StartCommand(cmd);
 }
 
 static bool HandleInputs(bool *pressed_enter)
@@ -217,22 +186,9 @@ int main(int argc, const char *argv[])
     STATE.config.selected_box_color = (Color){ 70,  110, 180, 255 };
   }
 
-  if (argc > 1) {
-    if (strcmp(argv[1], "dmenu") == 0) {
-      if ((err = LoadEntriesFromStdin()) != kErrorNone) {
-        fprintf(stderr, "Couldn't load the entries from stdin\n");
-        return 1;
-      } 
-    } else {
-      fprintf(stderr, "Unknown mode %s\n", argv[1]);
-      return 1;
-    }
-  } else {
-    if ((err = LoadEntriesFromFile()) != kErrorNone) {
-      fprintf(stderr, "Couldn't open and parse entries file - %s\n",
-          ErrorCodeToString(err));
-      return 1;
-    }
+  if ((err = LoadEntriesFromStdin()) != kErrorNone) {
+    fprintf(stderr, "Couldn't load the entries from stdin\n");
+    return 1;
   }
 
   SetTraceLogLevel(LOG_NONE);
@@ -250,14 +206,10 @@ int main(int argc, const char *argv[])
   }
 
   if (chosen) {
-    if (argc > 1) {
-      printf("%.*s", (int)STATE.entries[STATE.selected_entry].name.length,
-          STATE.entries[STATE.selected_entry].name.data);
-    } else {
-      RunCommand(STATE.entries[STATE.selected_entry].command);
-    }
+    printf("%.*s", (int)STATE.entries[STATE.selected_entry].name.length,
+        STATE.entries[STATE.selected_entry].name.data);
   }
   CloseWindow();
-  DEALLOCATE(&STATE.allocator, (void *)STATE.entries_file.data,
-      STATE.entries_file.length);
+  DEALLOCATE(&STATE.allocator, (void *)STATE.entries_to_free.data,
+      STATE.entries_to_free.length);
 }

@@ -16,7 +16,7 @@ const char *ErrorCodeToString(ErrorCode e)
     case kErrorNotFound: return "ErrorNotFound";
     case kErrorOS: return "ErrorOS";
 #ifndef CORE_NO_PLATFORM_DEPS
-    case kErrorSpawnProcessFail: return "ErrorSpawnProcessFail";
+    case kErrorProcessSpawnFail: return "ErrorProcessSpawnFail";
     case kErrorProcessWaitFail: return "ErrorProcessWaitFail";
     case kErrorProcessTermFail: return "ErrorProcessTermFail"; 
 #endif // CORE_NO_PLATFORM_DEPS
@@ -127,7 +127,7 @@ ErrorCode LoadFileAsStr(Allocator *alloc, const char *path, Str *out)
   if (!path || !alloc || !out) { return kErrorInvalidParam; }
   void *raw;
   ErrorCode ret_code = kErrorNone;
-  FILE *f = fopen(path, "r");
+  FILE *f = fopen(path, "rb");
   if (!f) { return kErrorNotFound; }
   if (fseek(f, 0, SEEK_END) != 0) { ret_code = kErrorOS; goto end_func; } 
   long bytes = ftell(f);
@@ -137,7 +137,11 @@ ErrorCode LoadFileAsStr(Allocator *alloc, const char *path, Str *out)
       != kErrorNone) {
     goto end_func;
   }
-  fread(raw, bytes, 1, f);
+  if (fread(raw, 1, bytes, f) != (size_t)bytes) {
+    DEALLOCATE(alloc, raw, bytes);
+    ret_code = kErrorOS;
+    goto end_func;
+  }
   out->data = (const char *)raw;
   out->length = bytes;
 end_func:
@@ -176,7 +180,7 @@ ErrorCode StartCommand(const char *command)
   HANDLE nul = CreateFileA("NUL", GENERIC_READ | GENERIC_WRITE,
       FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING,
       FILE_ATTRIBUTE_NORMAL, NULL);
-  if (nul == INVALID_HANDLE_VALUE) { return kErrorSpawnProcessFail; }
+  if (nul == INVALID_HANDLE_VALUE) { return kErrorProcessSpawnFail; }
   startup.hStdInput = nul;
   startup.hStdOutput = nul;
   startup.hStdError = nul;
@@ -191,13 +195,13 @@ ErrorCode StartCommand(const char *command)
       DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, NULL, NULL, &startup,
       &process);
   CloseHandle(nul);
-  if (!success) { return kErrorSpawnProcessFail; }
+  if (!success) { return kErrorProcessSpawnFail; }
   CloseHandle(process.hThread);
   CloseHandle(process.hProcess);
   return kErrorNone;
 #else
   pid_t pid = fork();
-  if (pid < 0) { return kErrorSpawnProcessFail; }
+  if (pid < 0) { return kErrorProcessSpawnFail; }
   if (pid == 0) {
     if (setsid() < 0) { _exit(1); }
     pid_t child = fork();
@@ -216,7 +220,7 @@ ErrorCode StartCommand(const char *command)
     return kErrorOS;
   }
   if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-    return kErrorSpawnProcessFail;
+    return kErrorProcessSpawnFail;
   }
   return kErrorNone;
 #endif
@@ -227,7 +231,7 @@ typedef struct {
   HANDLE hProcess;
   HANDLE hThread;
 #else
-  int pid;
+  pid_t pid;
 #endif
   int is_running;
 } ProcessInternal;
@@ -240,22 +244,17 @@ STATIC_ASSERT(sizeof(Process) >= sizeof(ProcessInternal), CheckProcessSize);
 ErrorCode ProcessStart(const ProcessConfig *pconf, Process *out)
 {
   if (!pconf || !pconf->executable_path || !out) { return kErrorInvalidParam; }
+  if (!pconf->args || !pconf->args[0]) { return kErrorInvalidParam; }
   memset(out, 0, sizeof(Process));
   ProcessInternal *proc = (ProcessInternal *)out->reserved;
 #ifdef _WIN32
   char cmd[4096] = { 0 };
   size_t offset = 0;
-  int written = snprintf(cmd + offset, sizeof(cmd) - offset, "\"%s\"",
-      pconf->executable_path);
-  if (written < 0 || (size_t)written >= sizeof(cmd) - offset) {
-    return kErrorOverflow;
-  }
-  offset += written;
   if (pconf->args) {
     for (int i = 0; pconf->args[i] != NULL; i++) {
       if (offset + 2 >= sizeof(cmd)) { return kErrorOverflow; }
       cmd[offset++] = ' ';
-      written = snprintf(cmd + offset, sizeof(cmd) - offset, "\"%s\"",
+      int written = snprintf(cmd + offset, sizeof(cmd) - offset, "\"%s\"",
           pconf->args[i]);
       if (written < 0 || (size_t)written >= sizeof(cmd) - offset) {
         return kErrorOverflow;
@@ -279,7 +278,7 @@ ErrorCode ProcessStart(const ProcessConfig *pconf, Process *out)
     nul = CreateFileA("NUL", GENERIC_READ | GENERIC_WRITE,
         FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING,
         FILE_ATTRIBUTE_NORMAL, NULL);
-    if (nul == INVALID_HANDLE_VALUE) { return kErrorSpawnProcessFail; }
+    if (nul == INVALID_HANDLE_VALUE) { return kErrorProcessSpawnFail; }
   }
 
   startup.hStdInput = (pconf->stdin_stream == kProcessStreamNull)
@@ -299,7 +298,7 @@ ErrorCode ProcessStart(const ProcessConfig *pconf, Process *out)
       TRUE, 0, NULL, NULL, &startup, &process_info);
 
   if (nul != INVALID_HANDLE_VALUE) { CloseHandle(nul); }
-  if (!success) { return kErrorSpawnProcessFail; }
+  if (!success) { return kErrorProcessSpawnFail; }
 
   proc->hProcess = process_info.hProcess;
   proc->hThread = process_info.hThread;
@@ -308,26 +307,35 @@ ErrorCode ProcessStart(const ProcessConfig *pconf, Process *out)
 #else
   posix_spawn_file_actions_t actions;
   if (posix_spawn_file_actions_init(&actions) != 0) {
-    return kErrorSpawnProcessFail;
+    return kErrorProcessSpawnFail;
   }
   if (pconf->stdin_stream == kProcessStreamNull) {
-    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null",
-        O_RDONLY, 0);
+    if (posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null",
+        O_RDONLY, 0) != 0) {
+      posix_spawn_file_actions_destroy(&actions);
+      return kErrorProcessSpawnFail;
+    }
   }
   if (pconf->stdout_stream == kProcessStreamNull) {
-    posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null",
-        O_WRONLY, 0);
+    if (posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null",
+        O_WRONLY, 0) != 0) {
+      posix_spawn_file_actions_destroy(&actions);
+      return kErrorProcessSpawnFail;
+    }
   }
   if (pconf->stderr_stream == kProcessStreamNull) {
-    posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null",
-        O_WRONLY, 0);
+    if (posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null",
+        O_WRONLY, 0) != 0) {
+      posix_spawn_file_actions_destroy(&actions);
+      return kErrorProcessSpawnFail;
+    }
   }
   pid_t pid = 0;
   int spawn_results = posix_spawn(&pid, pconf->executable_path, &actions, NULL,
       (char *const *)pconf->args, environ);
   posix_spawn_file_actions_destroy(&actions);
-  if (spawn_results != 0) { return kErrorSpawnProcessFail; }
-  proc->pid = (int)pid;
+  if (spawn_results != 0) { return kErrorProcessSpawnFail; }
+  proc->pid = pid;
   proc->is_running = 1;
   return kErrorNone;
 #endif
@@ -373,12 +381,12 @@ ErrorCode ProcessKill(Process *process)
 {
   if (!process) { return kErrorInvalidParam; }
   ProcessInternal *proc = (ProcessInternal *)process->reserved;
+  if (!proc->is_running) { return kErrorInvalidParam; }
 #ifdef _WIN32
   if (!TerminateProcess(proc->hProcess, 1)) { return kErrorProcessTermFail; }
 #else
   if (kill((pid_t)proc->pid, SIGTERM) < 0) { return kErrorProcessTermFail; }
 #endif
-  proc->is_running = 0;
   return kErrorNone;
 }
 
@@ -386,6 +394,7 @@ ErrorCode ProcessClose(Process *process)
 {
   if (!process) { return kErrorInvalidParam; }
   ProcessInternal *proc = (ProcessInternal *)process->reserved;
+  if (proc->is_running) { return kErrorInvalidParam; }
 #ifdef _WIN32
   if (proc->hProcess) {
     CloseHandle(proc->hProcess);

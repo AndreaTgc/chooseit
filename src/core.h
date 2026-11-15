@@ -139,7 +139,7 @@ ErrorCode LoadFileAsStr(Allocator *alloc, const char *path, Str *out);
 // interact with the OS, we start at 100 so that the user has more space for
 // defining their own generic errors before they reach these ones.
 enum {
-  kErrorSpawnProcessFail = 100, // The OS couldn't start a new process
+  kErrorProcessSpawnFail = 100, // The OS couldn't start a new process
   kErrorProcessWaitFail  = 101, // Failed to wait for process completion
   kErrorProcessTermFail  = 102  // Failed to terminate (or kill) the process
 };
@@ -155,9 +155,9 @@ typedef enum {
 // This type is used as a definition on how a spawned process should behave. The
 // user has to set at the very least the executable path so that it can be used
 // for calling the application.
-// The args array is optional, it's a an array where the last element has to be
-// NULL (this is how we know the arguments are finished) and they are passed to
-// the process by the OS layer.
+// The args array is optional (except for args[0] which has to be the exe name,
+// it's a an array where the last element has to be NULL (this is how we know
+// the arguments are finished) and they are passed to the process by the OS.
 // The user also has to define the config for the std file handles.
 typedef struct {
   const char *executable_path;     // Path to the executable we want to run
