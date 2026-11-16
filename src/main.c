@@ -1,5 +1,6 @@
 #include "core.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <raylib.h>
 
 #define WINDOW_WIDTH     600
@@ -47,16 +48,17 @@ static struct {
   char query[MAX_QUERY_LENGTH];
 } STATE = { 0 };
 
+#ifdef THEME_FILE_PATH
 static ErrorCode LoadThemeFromFile(void)
 {
   ErrorCode ret_code = kErrorNone;
   Str contents;
   TRY(LoadFileAsStr(&STATE.allocator, THEME_FILE_PATH, &contents));
   Str tofree = contents;
-
   DEALLOCATE(&STATE.allocator, (void *)tofree.data, tofree.length); 
   return ret_code;
 }
+#endif // THEME_FILE_PATH
 
 static ErrorCode LoadEntriesFromStdin(void)
 {
@@ -94,38 +96,35 @@ static ErrorCode LoadEntriesFromStdin(void)
 
 static bool HandleInputs(bool *pressed_enter)
 {
-    bool selection_dirty = false;
-    char c;
+  bool selection_dirty = false;
+  char c;
 
-    while (((c = GetCharPressed()) != 0)
-        && STATE.query_len < MAX_QUERY_LENGTH - 1) { 
-      STATE.query[STATE.query_len++] = (char)c;
-      STATE.query[STATE.query_len] = '\0';
-      selection_dirty = true;
-    }
+  while (((c = GetCharPressed()) != 0)
+      && STATE.query_len < MAX_QUERY_LENGTH - 1) { 
+    STATE.query[STATE.query_len++] = (char)c;
+    STATE.query[STATE.query_len] = '\0';
+    selection_dirty = true;
+  }
 
-    if ((IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE))
-        && STATE.query_len > 0) {
-      STATE.query[--STATE.query_len] = '\0';
-      selection_dirty = true;
-    }
+  if ((IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE))
+      && STATE.query_len > 0) {
+    STATE.query[--STATE.query_len] = '\0';
+    selection_dirty = true;
+  }
 
-    if ((IsKeyPressed(KEY_DOWN) || IsKeyPressedRepeat(KEY_DOWN))
-        && STATE.selected_entry + 1 < STATE.num_entries) {
-      STATE.selected_entry++;
-    }
+  if ((IsKeyPressed(KEY_DOWN) || IsKeyPressedRepeat(KEY_DOWN))
+      && STATE.selected_entry + 1 < STATE.num_entries) {
+    STATE.selected_entry++;
+  }
 
-    if (IsKeyPressed(KEY_UP) || IsKeyPressedRepeat(KEY_UP)) {
-      STATE.selected_entry = STATE.selected_entry > 0
-        ? STATE.selected_entry - 1
-        : 0;
-    }
+  if (IsKeyPressed(KEY_UP) || IsKeyPressedRepeat(KEY_UP)) {
+    STATE.selected_entry = STATE.selected_entry > 0
+      ? STATE.selected_entry - 1
+      : 0;
+  }
 
-    if (IsKeyPressed(KEY_ENTER)) {
-      *pressed_enter = true;
-    }
-
-    return selection_dirty;
+  if (IsKeyPressed(KEY_ENTER)) { *pressed_enter = true; }
+  return selection_dirty;
 }
 
 static int QSortCmp(const void *a, const void *b)
@@ -167,9 +166,9 @@ static void RenderEntries(void)
     DrawRectangle(x, y, ROW_WIDTH, ROW_HEIGHT - ROW_GAP, box);
 
     DrawText(TextFormat("%.*s", (int)STATE.entries[i].name.length,
-          STATE.entries[i].name.data), x + 8,
-          y + (ROW_HEIGHT - ROW_GAP - FONT_SIZE) / 2, FONT_SIZE,
-          STATE.config.text_color);
+        STATE.entries[i].name.data), x + 8,
+        y + (ROW_HEIGHT - ROW_GAP - FONT_SIZE) / 2, FONT_SIZE,
+        STATE.config.text_color);
   }
 }
 
@@ -179,12 +178,16 @@ int main(int argc, const char *argv[])
   bool chosen = false;
   STATE.allocator = GetLibcAllocator();
 
+#ifdef THEME_FILE_PATH
   if ((err = LoadThemeFromFile()) != kErrorNone) {
+#endif // THEME_FILE_PATH
     STATE.config.background         = (Color){ 30,   30,  34, 255 };
     STATE.config.text_color         = (Color){ 220, 220, 225, 255 };
     STATE.config.box_bg_color       = (Color){ 44,   44,  52, 255 };
     STATE.config.selected_box_color = (Color){ 70,  110, 180, 255 };
+#ifdef THEME_FILE_PATH
   }
+#endif // THEME_FILE_PATH
 
   if ((err = LoadEntriesFromStdin()) != kErrorNone) {
     fprintf(stderr, "Couldn't load the entries from stdin\n");
@@ -206,10 +209,12 @@ int main(int argc, const char *argv[])
   }
 
   if (chosen) {
-    printf("%.*s", (int)STATE.entries[STATE.selected_entry].name.length,
-        STATE.entries[STATE.selected_entry].name.data);
+    printf("%.*s\n", STR_FMT_ARGS(STATE.entries[STATE.selected_entry].name));
   }
+
   CloseWindow();
   DEALLOCATE(&STATE.allocator, (void *)STATE.entries_to_free.data,
       STATE.entries_to_free.length);
+
+  return chosen ? 0 : 1;
 }

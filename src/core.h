@@ -2,6 +2,7 @@
 #define CORE_H
 
 #include <stddef.h>
+#include <stdbool.h>
 
 #define UNUSED(x) ((void)(x))
 #define STATIC_ASSERT(cond, m) typedef int StaticAssertCheck##m[(cond) ? 1 : -1]
@@ -108,6 +109,8 @@ Allocator GetLibcAllocator(void);
   (alloc)->proc((alloc)->ctx, &((AllocatorRequest) { .ptr = tofree,            \
         .old_sz = size, .operation = kAllocatorOpFree }))
 
+bool CharIsSpace(char c);
+
 //============================================================================//
 // String view: this type can be used for programs where you have no need to  //
 // modify the original string and you just want to trim/tokenize/split views  // 
@@ -119,6 +122,8 @@ typedef struct {
   const char *data;
   size_t length;
 } Str;
+
+#define STR_FMT_ARGS(s) (int)((s).length), (s).data
 
 Str StrTrim(Str s);
 Str StrTrimLeft(Str s);

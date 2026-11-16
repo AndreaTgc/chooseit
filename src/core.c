@@ -1,5 +1,4 @@
 #include "core.h"
-#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -78,6 +77,15 @@ Allocator GetLibcAllocator(void)
 }
 
 //============================================================================//
+// Char handling implementation                                               //
+//============================================================================//
+
+bool CharIsSpace(char c)
+{
+  return c == ' ' || c == '\n' || c == '\r' || c == '\t' || c == '\v';
+}
+
+//============================================================================//
 // String view implementation                                                 //
 //============================================================================//
 
@@ -88,13 +96,13 @@ Str StrTrim(Str s)
 
 Str StrTrimLeft(Str s)
 {
-  while (s.length > 0 && isspace(s.data[0])) { s.data++; s.length--; }
+  while (s.length > 0 && CharIsSpace(s.data[0])) { s.data++; s.length--; }
   return s;
 }
 
 Str StrTrimRight(Str s)
 {
-  while (s.length > 0 && isspace(s.data[s.length - 1])) { s.length--; }
+  while (s.length > 0 && CharIsSpace(s.data[s.length - 1])) { s.length--; }
   return s;
 }
 
